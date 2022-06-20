@@ -1,0 +1,1 @@
+This repo is a compilation of all courseworks I have done in UOL. For now, the programming languages I have done are R and Python that requires querying and manipulating of data.
