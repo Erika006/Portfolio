@@ -1,0 +1,660 @@
+---
+title: "210501867 Script"
+author: "Erika Sim"
+date: '2023-12-27'
+output:
+  pdf_document: default
+  html_document: default
+---
+## Download all the datasets here
+https://drive.google.com/drive/folders/1m5xdYpjSILphWonXFQVWelIzWCfUn34N?usp=sharing
+
+## Setting working directory
+```{r}
+setwd("C:/Users/Admin/Desktop/datasets")
+```
+
+## Loading library
+```{r}
+library(dplyr)
+library(tidyr)
+library(MASS)
+library(ISLR2)
+library(caTools)
+library(Metrics)
+library(magrittr)
+library(fastDummies)
+library(randomForest)
+library(xgboost)
+library(cluster)
+library("ggrepel")
+library("factoextra")
+library(e1071)
+library(caret)
+library(pROC)
+library(magrittr)
+library(scales)
+library(igraph)
+library(ggplot2)
+library("ggpubr")
+library(corrplot)
+library(RColorBrewer)
+```
+
+# Regression Analysis
+*Loading and cleaning of dataset*
+```{r}
+movies <- read.csv("movies.csv")
+summary.default(movies)
+sum(is.na(movies))
+sum(duplicated(movies))
+movies[is.na(movies)] <- 0
+```
+
+*Exploring data*
+```{r}
+ggplot(data = movies, aes(x = year, y = gross, fill = genre)) +
+  geom_col() +
+  xlab("Movies for the year") +
+  ylab("Gross") +
+  scale_y_continuous(labels = unit_format(unit = "M", scale = 1e-7)) +
+  facet_wrap("genre") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.5))
+```
+Gross by Genre from 1980 to 2020. Action genre made the most revenue while Western made the least.
+
+
+```{r}
+ggplot(data = movies, aes(y = score, fill = genre)) +
+  geom_histogram(bins = 20) +
+  xlab("Count") +
+  ylab("Score") +
+  facet_wrap("genre") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.5))
+```
+Score by Genre from 1980 to 2020. Comedy genre had the highest score followed by Action genre.
+
+
+```{r}
+ggplot(data = movies, aes(x = budget, y = gross)) +
+  geom_point(color = "blue") +
+  geom_smooth(method = "lm", color = "red") +
+  xlab("Budget") +
+  ylab("Gross") +
+  labs(title = "Correlation between budget and revenue")
+```
+Correlation between budget and gross. This showed that there was a positive correlation between the two variables as seen with the regression line.
+
+*Setting dataset into test and train sets*
+Removing name, year and company from this model as there will not be any significance for these categorical variables. Only exception would be genre.
+```{r}
+set.seed(5)
+movies2 <- subset(movies, select= -c(name, year, company)) # removal of insignificant categorical variables
+moviesf <- dummy_cols(movies2, select_columns = c("genre"), remove_selected_columns = TRUE, remove_first_dummy = TRUE)
+movies_set <- sample.split(moviesf, 0.8)
+movies_train <- subset(moviesf, movies_set == TRUE)
+movies_test <- subset(moviesf, movies_set == FALSE)
+```
+
+> Correlation Matrix
+
+```{r}
+movies3 <- subset(movies, select= -c(name, year, company, genre)) # removal of all categorical variables
+rcorr_matrix <- cor(movies3)
+round(rcorr_matrix, 4)
+corrplot(rcorr_matrix, type = "upper", order = "hclust",
+         method = "color",
+         tl.col = "black", tl.srt = 30,
+         addCoef.col = "black",
+         sig.level = 0.01,
+         diag=FALSE)
+```
+We see from this correlation matrix that there is strong correlation between gross and budget.
+
+> Linear regression
+
+We will make a dummy variable for genre.
+```{r}
+lr <- lm(gross ~ . , data = movies_train)
+summary(lr)
+radj <- summary(lr)$adj.r.squared # 0.661584
+lr_pred <- predict(lr, movies_test, type = "response")
+lr_rmse <- rmse(lr_pred, movies_test$gross) # 87368985
+lr_result <- c("Adjusted R Square" = radj, "RMSE" = lr_rmse)
+```
+Our objective here is to find out how is gross (dependent variable) affected by the other independent variables available. As the dummy variables were created, we can now see which genre has significant impact on gross and for the numerical variables as well. The adjusted R-squared is 0.6736.
+
+> Linear regression without runtime, score, and certain genres that was not significant (Better r-squared)
+
+```{r}
+lr2 <- lm(gross ~ . -runtime -score -genre_Adventure -genre_Biography -genre_Crime -genre_Fantasy -genre_History -genre_Music -genre_Musical -genre_Mystery -genre_Romance -genre_Sport -genre_Thriller -genre_Western, data = movies_train)
+summary(lr2)
+radj2 <- summary(lr2)$adj.r.squared # 0.661801
+lr2_pred <- predict(lr, movies_test, type = "response")
+lr2_rmse <- rmse(lr_pred, movies_test$gross) # 87368985
+lr2_result <- cbind("Adjusted R Square" = radj2, "RMSE" = lr2_rmse)
+```
+After removing the insignificant variables, the adjusted r-squared improved by 0.0002 at 0.6738 from previous model.
+
+> Plots
+
+```{r}
+par(mfrow=c(1,2))
+plot(lr, c(1), main = "LR 1", col = "grey")
+plot(lr2, c(1), main = "LR 2",col = "grey")
+```
+
+> Non-linear transformation of predictors
+
+```{r}
+qlr <- lm(gross ~ votes + I(votes^2) + budget + I(budget^2) + genre_Animation + genre_Comedy + genre_Drama + genre_Family + genre_Horror, data = movies_train)
+summary(qlr)
+radj3 <- summary(qlr)$adj.r.squared # 0.7067
+qlr_pred <- predict(qlr, movies_test, type = "response")
+qlr_rmse <- rmse(qlr_pred, movies_test$gross) # 84423164
+qlr_result <- cbind("Adjusted R Square" = radj2, "RMSE" = qlr_rmse)
+plot(qlr, c(1), main = "Quadratic LR", col = "grey")
+```
+The non-zero p-value associated with the newly implemented quadratic term resulted in an improved model seen in the increased adjust R-squared. 
+
+> Random Forest
+
+```{r}
+set.seed(15)
+rrf <- randomForest(gross ~ . , data = movies_train, type = "regression") 
+rrf # r-squared = 73.03%
+rrf_pred <- predict(rrf, movies_test)
+rrf_rmse <- rmse(rrf_pred, movies_test$gross) # 77096427
+
+#Variables we should take note of
+impt_rrf <- varImp(rrf, scale = T)
+impt_rrf
+varImpPlot(rrf)
+```
+The two most important variables are budget and votes that would have significant impact on gross can be observed from the Random Forest plot.
+
+> Support Vector Machine (worse than rf)
+
+```{r}
+rsvm <- svm(gross ~ . , data = movies_train, cost = 10, scale = FALSE)
+rsvm_pred <- predict(rsvm, movies_test) # predict target label
+rsvm_rmse <- rmse(rsvm_pred, movies_test$gross) # 162413205
+```
+
+> XGBoost
+
+```{r}
+set.seed(10)
+rxgb <- caret::train(gross ~ ., 
+              data = movies_train, 
+              method = "xgbTree",
+              trControl = trainControl("cv", verboseIter = FALSE, number = 10, allowParallel = TRUE),
+              verbose = TRUE)
+rxgb_pred <- predict(rxgb, movies_test)
+rxgb_rmse <- rmse(rxgb_pred, movies_test$gross) # 81609432
+
+#Variables we should take note of
+impt_rxgb <- varImp(rxgb, scale = T)
+impt_rxgb
+plot(impt_rxgb)
+```
+
+
+> Final result of all model
+
+```{r}
+RMSE <- c(lr_rmse, lr2_rmse, qlr_rmse, rrf_rmse, rsvm_rmse, rxgb_rmse)
+reg_result <- data.frame(RMSE,
+                         row.names = c("Linear Regression", "Linear Regression 2", "Quadratic LR", "Random Forest", "Support Vector Machine", "XGBoost"))
+reg_result
+```
+```{r}
+outlier <- reg_result > 90000000
+plot(reg_result[-5, ])
+text(reg_result[-5, ], labels = c("LR", "LR2", "QLR", "RF","XGB"), pos = 2, cex = 0.6)
+```
+From the plot, we can observe that XGBoost has the best model in predicting gross as it has the best AUC of 0.9804 and second lowest RMSE of 81609432.
+
+
+## Classification Analysis
+*Loading and cleaning of dataset*
+```{r}
+heart_m <- read.csv("heart.csv")
+summary(heart_m)
+sum(is.na(heart_m))
+sum(duplicated(heart_m))
+```
+No NAs to omit. Clean data.
+
+*Exploring data*
+```{r}
+heart_m["thal"][heart_m["thal"] == 0] <- NA
+heart_dropna <- heart_m %>% drop_na(thal)
+heart <- heart_dropna %>% 
+  mutate(sex = if_else(sex == 1, "MALE", "FEMALE"),
+         fbs = if_else(fbs == 1, ">120", "<=120"),
+         exang = if_else(exang == 1, "YES" ,"NO"),
+         thal = if_else(thal == 1, "NORMAL", if_else(thal == 2, "FIXED", "REVERSABLE")),
+         target = if_else(target == 1, "DISEASE", "NO DISEASE")
+         ) %>% 
+  mutate_if(is.character, as.factor) # changing to factor
+summary(heart)
+```
+Summary of the data after data transformation
+
+```{r}
+ggplot(heart, aes(x = target, fill = target)) +
+  geom_bar() +
+  xlab("Heart Disease") +
+  ylab("Number of patients") +
+  ggtitle("Presence/Absence of Heart Disease")
+
+table(heart$target)
+```
+Visualization of target showing no imbalance issue.
+
+```{r}
+ggplot(heart, aes(x = age)) +
+  geom_histogram(binwidth = 5, colour = "white", fill = "lightblue", alpha = 0.8) +
+  geom_density(eval(bquote(aes(y=..count..*5))),colour="darkgreen", alpha=0.3) +
+  geom_vline(xintercept = 58, linetype="dashed") +
+  xlab("Age") +
+  ylab("Count")
+```
+Showing a normal distribution of age.
+
+> Continuous Variables
+
+```{r}
+num.cols <- sapply(heart, is.numeric)
+ccorr_matrix <- cor(heart[,num.cols])
+round(ccorr_matrix, 4)
+corrplot(ccorr_matrix, type = "upper", order = "hclust",
+         method = "color",
+         tl.col = "black", tl.srt = 30,
+         addCoef.col = "black",
+         sig.level = 0.01,
+         diag=FALSE)
+```
+Correlation plot. Barely shown any correlation between the numeric variables, meaning it may require the categorical variables for further analysis.
+
+```{r}
+tar_age <- ggplot(heart, aes(target, age, fill = target)) +
+  geom_boxplot()
+
+tar_trest <- ggplot(heart, aes(target, trestbps, fill = target)) +
+  geom_boxplot(outlier.shape = NA) +
+  coord_cartesian(ylim = c(90,185))
+
+tar_chol <- ggplot(heart, aes(target, chol, fill = target)) +
+  geom_boxplot(outlier.shape = NA) +
+  coord_cartesian(ylim = c(100,380))
+
+tar_thalach <- ggplot(heart, aes(target, thalach, fill = target)) +
+  geom_boxplot(outlier.shape = NA) +
+  coord_cartesian(ylim = c(85,220))
+
+tar_conplots <- ggarrange(tar_age, tar_trest, tar_chol, tar_thalach,
+                       ncol = 2, nrow = 2)
+tar_conplots
+```
+
+> Categorical variables
+
+*All target related EDA*
+```{r}
+tar_sex <- ggplot(heart, aes(target)) + 
+  geom_bar(aes(fill = factor(sex)), position = "dodge") +
+  labs(fill = "Sex") +
+  theme(legend.title = element_text(size = 10))
+
+tar_cp <- ggplot(heart, aes(target)) + 
+  geom_bar(aes(fill = factor(cp)), position = "dodge") +
+  labs(fill = "Cp") +
+  theme(legend.title = element_text(size = 10))
+
+tar_fbs <- ggplot(heart, aes(target)) + 
+  geom_bar(aes(fill = factor(fbs)), position = "dodge") +
+  labs(fill = "Fbs") +
+  theme(legend.title = element_text(size = 10)) # though not that accurate as research says that if its more than 100, the risk of heart disease would be increased. https://pubmed.ncbi.nlm.nih.gov/23404299/#:~:text=As%20fasting%20glucose%20levels%20increased,for%20hemorrhagic%20stroke%20did%20not.
+
+tar_restecg <- ggplot(heart, aes(target)) + 
+  geom_bar(aes(fill = factor(restecg)), position = "dodge") +
+  labs(fill = "Restecg") +
+  theme(legend.title = element_text(size = 10))
+
+tar_exang <- ggplot(heart, aes(target)) + 
+  geom_bar(aes(fill = factor(exang)), position = "dodge") +
+  labs(fill = "Exang") +
+  theme(legend.title = element_text(size = 10))
+
+tar_thal <- ggplot(heart, aes(target)) + 
+  geom_bar(aes(fill = factor(thal)), position = "dodge") +
+  labs(fill = "Thal") +
+  theme(legend.title = element_text(size = 10))
+
+tar_catplots <- ggarrange(tar_sex, tar_cp, tar_fbs, tar_restecg, tar_exang, tar_thal, 
+                       ncol = 2, nrow = 3)
+print(tar_catplots)
+```
+
+*Setting dataset into training and testing sets*
+```{r}
+set.seed(10)
+heart_set <- sample.split(heart_dropna, 0.8)
+heart_train <- subset(heart_dropna, heart_set == TRUE)
+heart_test <- subset(heart_dropna, heart_set == FALSE)
+```
+
+# Logistic Regression
+*Training Log model*
+```{r}
+library(car)
+lgm <- glm(target ~ . , data = heart_train, family = "binomial")
+summary(lgm) # AIC = 610.61
+vif(lgm)
+```
+AIC is at 610.10 (smaller the AIC the better). Since all VIF are less than three, there is no multicollinearity between the variables, only insignificant variables for this model.
+
+```{r}
+lgm2 <- glm(target ~ . -fbs - age, data = heart_train, family = "binomial")
+summary(lgm2)
+vif(lgm2)
+```
+We removed fbs and age as they were insignificant from the previous model and the AIC improved at 606.98. This would be our final model as there are nothing else to be removed.
+
+> Making predictions
+
+```{r}
+clgm_pred <- predict(lgm2, heart_test, type = "response")
+clgm_pred <- ifelse(clgm_pred >= 0.5, 1, 0)
+
+# Confusion Matrix
+clgm_cm <- confusionMatrix(factor(heart_test$target), factor(clgm_pred))
+
+# ROC-AUC & Accuracy
+clgm_roc <- roc(heart_test$target, clgm_pred)
+plot(clgm_roc, plot = TRUE, print.auc = TRUE)
+clgm_acc <- clgm_cm$overall[1]
+clgm_auc <- clgm_roc$auc
+clgm_result <- cbind("Accuracy" = clgm_acc, "AUC" = clgm_auc) # acc = 0.8346 / auc = 0.8304
+```
+
+# Random Forest
+*Training RF model*
+```{r}
+set.seed(20)
+crf <- randomForest(factor(target) ~ . , data = heart_train)
+```
+
+> Making predictions
+
+```{r}
+crf_pred <- predict(crf, heart_test, type = "class")
+
+# Confusion Matrix
+crf_cm <- confusionMatrix(factor(heart_test$target), factor(crf_pred))
+
+# ROC-AUC & Accuracy
+crf_roc <- roc(heart_test$target, as.numeric(crf_pred))
+plot(crf_roc, plot = TRUE, print.auc = TRUE)
+crf_acc <- crf_cm$overall[1]
+crf_auc <- crf_roc$auc
+crf_result <- cbind("Accuracy" = crf_acc, "AUC" = crf_auc) # acc = 0.9882 / auc = 0.98
+
+# Variables we should take note of
+impt_crf <- varImp(crf, scale = T)
+impt_crf
+varImpPlot(crf)
+```
+Important variables to take note of are chest pain and ca
+
+# Decision Tree
+```{r}
+library(rpart)
+cdt <- rpart(factor(target) ~ . , data = heart_train, method = "class")
+```
+
+> Making predictions
+
+```{r}
+cdt_pred <- predict(cdt, heart_test, type = "class")
+
+# Confusion Matrix
+cdt_cm <- confusionMatrix(factor(heart_test$target), factor(cdt_pred))
+
+# ROC-AUC & Accuracy
+cdt_roc <- roc(heart_test$target, as.numeric(cdt_pred))
+plot(cdt_roc, plot = TRUE, print.auc = TRUE)
+cdt_acc <- cdt_cm$overall[1]
+cdt_auc <- cdt_roc$auc
+cdt_result <- cbind("Accuracy" = cdt_acc, "AUC" = cdt_auc) # acc = 0.8582677 / auc = 0.8553091
+```
+Accuracy and AUC is lower than RF
+
+# Support Vector Machine
+```{r}
+csvm <- svm(target ~ . , 
+            data = heart_train, 
+            kernel = "linear", 
+            type = "C-classification", 
+            cost = 10,
+            scale = FALSE)
+```
+
+> Making predictions
+
+```{r}
+csvm_pred <- predict(csvm, heart_test)
+
+# Confusion Matrix
+csvm_cm <- confusionMatrix(as.factor(heart_test$target), csvm_pred)
+
+# ROC-AUC & Accuracy
+csvm_roc <- roc(heart_test$target, as.numeric(csvm_pred))
+plot(csvm_roc, plot = TRUE, print.auc = TRUE)
+csvm_acc <- csvm_cm$overall[1]
+csvm_auc <- csvm_roc$auc
+csvm_result <- cbind("Accuracy" = csvm_acc, "AUC" = csvm_auc) # acc = 0.8385827 / auc = 0.8335618
+```
+
+> Final result of all model
+
+```{r}
+cres <- rbind(clgm_result, crf_result, cdt_result, csvm_result)
+cat_result <- data.frame(cres,
+                         row.names = c("Log Regression", "Random Forest", "Decision Tree", "Support Vector Machine"))
+cat_result
+```
+```{r}
+plot(cat_result)
+text(cat_result, labels = c("LGM", "RF", "DT", "SVM"), pos = 2, cex = 0.6)
+```
+From the plot, we can observe that Random Forest has the best model in targeting patients with heart disease as it has the best Accuracy of 0.9882 and AUC of 0.9890.
+
+## Unsupervised Learning
+*Loading and cleaning dataset*
+```{r}
+customer <- read.csv("Mall_Customers.csv")
+summary(customer)
+sum(is.na(customer))
+sum(duplicated(customer))
+```
+No NAs or duplicates found.
+
+*Exploring data*
+```{r}
+avg_age <- summary(customer$Age) # 38.85
+avg_income <- summary(customer$Annual.Income..k..) # 60.56
+avg_spendingscore <- summary(customer$Spending.Score..1.100.) #50.20
+```
+
+```{r}
+ggplot(customer, aes(Age)) +
+  geom_histogram(binwidth = 5, colour = "white", fill = "lightblue", alpha = 0.8) +
+  geom_density(eval(bquote(aes(y=..count..*5))),colour="darkgreen", alpha=0.3) +
+  geom_vline(xintercept = 33, linetype="dashed") +
+  xlab("Age") +
+  ylab("Frequency")
+```
+The highest count of customer's age were between 30 to 35.
+
+```{r}
+ggplot(customer, aes(Annual.Income..k..)) +
+  geom_histogram(binwidth = 5, colour = "black", fill = "cornsilk", alpha = 0.8) +
+  geom_density(eval(bquote(aes(y=..count..*5))),colour="black", alpha=0.3) +
+  geom_vline(xintercept = 65, linetype="dashed") +
+  xlab("Annual Income") +
+  ylab("Frequency")
+```
+Customer's annual income is around 55k to 75k.
+
+```{r}
+ggplot(customer, aes(Spending.Score..1.100.)) +
+  geom_histogram(binwidth = 5, colour = "white", fill = "darkseagreen", alpha = 0.8) +
+  geom_density(eval(bquote(aes(y=..count..*5))),colour="black", alpha=0.3) +
+  geom_vline(xintercept = 50, linetype="dashed") +
+  xlab("Spending Score") +
+  ylab("Frequency")
+```
+Most of the customer's spending score are around 40 to 60 out of 100
+
+# K-means clustering
+*Correlation plot & matrix*
+```{r}
+# Removing CustomerID from dataframe
+customer <- subset(customer, select = -c(CustomerID))
+
+# converting Gender to binary variables
+customer <- customer %>%
+  mutate(Gender = if_else(Gender == "Male", 0, 1))
+plot(customer[, 2:4])
+```
+
+*Principal Component Analysis*
+```{r}
+pca <- prcomp(customer, scale = F)
+summary(pca)
+
+pca$rotation
+```
+We are only using PC1 and PC2 because PC3 variance is close to 0.1 suggesting that it does not have much interpretive value.
+
+*Biplot of PCA*
+```{r}
+biplot <- fviz_pca_biplot(pca,
+                          col.var = "black",
+                          col.ind = "red",
+                          alpha.var = 0.6,
+                          labelsize = 2) +
+  labs(x = "PC1 (45.12%)",
+       y = "PC2 (44.10%)")
+biplot
+```
+
+> Elbow Method 
+
+```{r}
+# Taking out Gender to proceed with formula as they cannot calculate binary values
+customer_f <- customer[, 2:4]
+kmeans(customer_f,3) #Initial cluster sum of squares by cluster = 49.2%
+```
+
+```{r}
+pca_score <- data.frame(pca$x[, 1:2])
+
+set.seed(25)
+ssw <- vector()
+
+for(i in 1:10){
+  x <- sum(kmeans(pca_score, i)$withinss)
+  ssw[i] = x
+  print(x)
+}
+
+plot(x = 1:10, ssw, 
+     type = "b",
+     xlab = "Number of clusters (k)",
+     ylab = "Sum of Squares Within")
+```
+From the plot, we conclude that 5 is the optimal number of clusters as its observed that the bent starts from in this elbow plot.
+
+*Taking k = 5 as our optimal cluster into the model*
+```{r}
+kmeans_model <- kmeans(customer_f, 5) # css went to 75.6%
+kmeans_model
+```
+
+*Visualizing the clusters*
+```{r}
+set.seed(30)
+ggplot(customer_f, aes(x = Annual.Income..k.., y = Spending.Score..1.100.)) +
+  geom_point(stat = "identity", aes(color = as.factor(kmeans_model$cluster))) +
+  scale_color_discrete(name = " ",
+                       breaks = c("1", "2", "3", "4", "5"),
+                       labels = c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4", "Cluster 5")) +
+  ggtitle("Clusters of Mall Customers")
+```
+```{r}
+fviz_cluster(kmeans_model, data = customer_f) +
+  ggtitle("K-means where k = 5")
+```
+
+# Hierarchical Clustering (Agglomerative Method)
+We will be using Euclidean distance metric
+
+*Best linkage method to use*
+```{r}
+x <- c("ward", "single", "complete", "average")
+names(x) <- c("ward", "single", "complete", "average")
+
+coeff <- function(x){
+  agnes(customer_f, method = x)$ac
+}
+
+sapply(x, coeff) # 0.9835
+```
+The best linkage method to use would be Ward's method so we will be using this for our clustering
+
+```{r}
+hclust <- agnes(customer_f, method = "ward")
+
+pltree(hclust, cex = 0.5, hang = -1, main = "Hierarchical Clustering Dendogram")
+```
+*Optimal cluster*
+```{r}
+fviz_nbclust(pca_score, FUN = hcut, method = "silhouette")
+```
+We are using silhouette method here instead of elbow method, both of which shows to use k = 5.
+
+*Cutting the dendogram at k =5*
+```{r}
+final_hclust <- cutree(hclust, k = 5)
+
+fviz_cluster(list(cluster = final_hclust, data = customer_f)) +
+  ggtitle("Hierarchical Cluster where k = 5")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
