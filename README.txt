@@ -1,1 +1,2 @@
-This repo is a compilation of all courseworks I have done in UOL. For now, the programming languages I have done are R and Python that requires querying and manipulating of data.
+This repo is a compilation of all courseworks I have done in UOL. The programming languages I have done are R and Python that requires querying and manipulating of data.
+Adding on after year 3, I have completed the Machine Learning coursework by using R programming to analyse real-world datasets using the different techniques I have been taught: Regression, Classification and Unsupervised Learning.
