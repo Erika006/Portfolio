@@ -1,2 +1,3 @@
 This repo is a compilation of all programming courseworks I have done in UOL. The programming languages I have done are R and Python that requires querying and manipulating of data.
+In year 2, I started out on Tableau and was tasked to create a story of a collection of five dashboards and provide key insights with recommendations to senior management from my analysis.
 Adding on after year 3, I have completed the Machine Learning coursework by using R programming to analyse real-world datasets using the different techniques I have been taught: Regression, Classification and Unsupervised Learning.
